@@ -10,6 +10,8 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"reflect"
+
+	"github.com/google/go-safeweb/safesql"
 )
 
 // ConnectContext to a database and verify with a ping.
@@ -168,7 +170,7 @@ func (db *DB) QueryxContext(ctx context.Context, query string, args ...interface
 
 // QueryRowxContext queries the database and returns an *sqlx.Row.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *Row {
+func (db *DB) QueryRowxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := db.DB.QueryContext(ctx, query, args...)
 	return &Row{rows: rows, err: err, unsafe: db.unsafe, Mapper: db.Mapper}
 }

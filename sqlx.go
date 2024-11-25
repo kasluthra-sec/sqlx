@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/go-safeweb/safesql"
 	"github.com/jmoiron/sqlx/reflectx"
 )
 
@@ -241,7 +242,7 @@ func (r *Row) Err() error {
 // DB is a wrapper around sql.DB which keeps track of the driverName upon Open,
 // used mostly to automatically bind named queries using the right bindvars.
 type DB struct {
-	*sql.DB
+	*safesql.DB
 	driverName string
 	unsafe     bool
 	Mapper     *reflectx.Mapper
@@ -251,7 +252,7 @@ type DB struct {
 // driverName of the original database is required for named query support.
 //
 //lint:ignore ST1003 changing this would break the package interface.
-func NewDb(db *sql.DB, driverName string) *DB {
+func NewDb(db *safesql.DB, driverName string) *DB {
 	return &DB{DB: db, driverName: driverName, Mapper: mapper()}
 }
 
@@ -262,11 +263,11 @@ func (db *DB) DriverName() string {
 
 // Open is the same as sql.Open, but returns an *sqlx.DB instead.
 func Open(driverName, dataSourceName string) (*DB, error) {
-	db, err := sql.Open(driverName, dataSourceName)
+	db, err := safesql.Open(driverName, dataSourceName)
 	if err != nil {
 		return nil, err
 	}
-	return &DB{DB: db, driverName: driverName, Mapper: mapper()}, err
+	return &DB{DB: &db, driverName: driverName, Mapper: mapper()}, err
 }
 
 // MustOpen is the same as sql.Open, but returns an *sqlx.DB instead and panics on error.
@@ -348,7 +349,7 @@ func (db *DB) Beginx() (*Tx, error) {
 
 // Queryx queries the database and returns an *sqlx.Rows.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) Queryx(query string, args ...interface{}) (*Rows, error) {
+func (db *DB) Queryx(query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := db.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -358,7 +359,7 @@ func (db *DB) Queryx(query string, args ...interface{}) (*Rows, error) {
 
 // QueryRowx queries the database and returns an *sqlx.Row.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) QueryRowx(query string, args ...interface{}) *Row {
+func (db *DB) QueryRowx(query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := db.DB.Query(query, args...)
 	return &Row{rows: rows, err: err, unsafe: db.unsafe, Mapper: db.Mapper}
 }
