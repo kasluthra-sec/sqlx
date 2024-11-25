@@ -160,7 +160,7 @@ func (db *DB) PreparexContext(ctx context.Context, query string) (*Stmt, error) 
 
 // QueryxContext queries the database and returns an *sqlx.Rows.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) QueryxContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+func (db *DB) QueryxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := db.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
