@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/google/go-safeweb/safesql"
 )
 
 func TestNamedContextQueries(t *testing.T) {
@@ -19,25 +21,25 @@ func TestNamedContextQueries(t *testing.T) {
 		ctx := context.Background()
 
 		// Check that invalid preparations fail
-		_, err = db.PrepareNamedContext(ctx, "SELECT * FROM person WHERE first_name=:first:name")
+		_, err = db.PrepareNamedContext(ctx, safesql.New("SELECT * FROM person WHERE first_name=:first:name"))
 		if err == nil {
 			t.Error("Expected an error with invalid prepared statement.")
 		}
 
-		_, err = db.PrepareNamedContext(ctx, "invalid sql")
+		_, err = db.PrepareNamedContext(ctx, safesql.New("invalid sql"))
 		if err == nil {
 			t.Error("Expected an error with invalid prepared statement.")
 		}
 
 		// Check closing works as anticipated
-		ns, err = db.PrepareNamedContext(ctx, "SELECT * FROM person WHERE first_name=:first_name")
+		ns, err = db.PrepareNamedContext(ctx, safesql.New("SELECT * FROM person WHERE first_name=:first_name"))
 		test.Error(err)
 		err = ns.Close()
 		test.Error(err)
 
-		ns, err = db.PrepareNamedContext(ctx, `
+		ns, err = db.PrepareNamedContext(ctx, safesql.New(`
 			SELECT first_name, last_name, email
-			FROM person WHERE first_name=:first_name AND email=:email`)
+			FROM person WHERE first_name=:first_name AND email=:email`))
 		test.Error(err)
 
 		// test Queryx w/ uses Query
@@ -78,9 +80,9 @@ func TestNamedContextQueries(t *testing.T) {
 		}
 
 		// test Exec
-		ns, err = db.PrepareNamedContext(ctx, `
+		ns, err = db.PrepareNamedContext(ctx, safesql.New(`
 			INSERT INTO person (first_name, last_name, email)
-			VALUES (:first_name, :last_name, :email)`)
+			VALUES (:first_name, :last_name, :email)`))
 		test.Error(err)
 
 		js := Person{
@@ -93,7 +95,7 @@ func TestNamedContextQueries(t *testing.T) {
 
 		// Make sure we can pull him out again
 		p2 := Person{}
-		db.GetContext(ctx, &p2, db.Rebind("SELECT * FROM person WHERE email=?"), js.Email)
+		db.GetContext(ctx, &p2, db.Rebind(safesql.New("SELECT * FROM person WHERE email=?")), js.Email)
 		if p2.Email != js.Email {
 			t.Errorf("expected %s, got %s", js.Email, p2.Email)
 		}
@@ -114,7 +116,7 @@ func TestNamedContextQueries(t *testing.T) {
 		// then rollback...
 		tx.Rollback()
 		// looking for Steven after a rollback should fail
-		err = db.GetContext(ctx, &p2, db.Rebind("SELECT * FROM person WHERE email=?"), sl.Email)
+		err = db.GetContext(ctx, &p2, db.Rebind(safesql.New("SELECT * FROM person WHERE email=?")), sl.Email)
 		if err != sql.ErrNoRows {
 			t.Errorf("expected no rows error, got %v", err)
 		}
@@ -127,7 +129,7 @@ func TestNamedContextQueries(t *testing.T) {
 		tx.Commit()
 
 		// looking for Steven after a Commit should succeed
-		err = db.GetContext(ctx, &p2, db.Rebind("SELECT * FROM person WHERE email=?"), sl.Email)
+		err = db.GetContext(ctx, &p2, db.Rebind(safesql.New("SELECT * FROM person WHERE email=?")), sl.Email)
 		test.Error(err)
 		if p2.Email != sl.Email {
 			t.Errorf("expected %s, got %s", sl.Email, p2.Email)

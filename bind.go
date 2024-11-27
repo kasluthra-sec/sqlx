@@ -101,15 +101,16 @@ func Rebind(bindType int, query safesql.TrustedSQLString) safesql.TrustedSQLStri
 // much simpler and should be more resistant to odd unicode, but it is twice as
 // slow.  Kept here for benchmarking purposes and to possibly replace Rebind if
 // problems arise with its somewhat naive handling of unicode.
-func rebindBuff(bindType int, query string) string {
+func rebindBuff(bindType int, query safesql.TrustedSQLString) safesql.TrustedSQLString {
 	if bindType != DOLLAR {
 		return query
 	}
 
-	b := make([]byte, 0, len(query))
+	rawQuery := query.String()
+	b := make([]byte, 0, len(rawQuery))
 	rqb := bytes.NewBuffer(b)
 	j := 1
-	for _, r := range query {
+	for _, r := range rawQuery {
 		if r == '?' {
 			rqb.WriteRune('$')
 			rqb.WriteString(strconv.Itoa(j))
@@ -119,7 +120,7 @@ func rebindBuff(bindType int, query string) string {
 		}
 	}
 
-	return rqb.String()
+	return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(rqb.String())
 }
 
 func asSliceForIn(i interface{}) (v reflect.Value, ok bool) {
@@ -147,7 +148,7 @@ func asSliceForIn(i interface{}) (v reflect.Value, ok bool) {
 // In expands slice values in args, returning the modified query string
 // and a new arg list that can be executed by a database. The `query` should
 // use the `?` bindVar.  The return value uses the `?` bindVar.
-func In(query string, args ...interface{}) (string, []interface{}, error) {
+func In(query safesql.TrustedSQLString, args ...interface{}) (safesql.TrustedSQLString, []interface{}, error) {
 	// argMeta stores reflect.Value and length for slices and
 	// the value itself for non-slice arguments
 	type argMeta struct {
@@ -173,7 +174,7 @@ func In(query string, args ...interface{}) (string, []interface{}, error) {
 			var err error
 			arg, err = a.Value()
 			if err != nil {
-				return "", nil, err
+				return safesql.New(""), nil, err
 			}
 		}
 
@@ -185,7 +186,7 @@ func In(query string, args ...interface{}) (string, []interface{}, error) {
 			flatArgsCount += meta[i].length
 
 			if meta[i].length == 0 {
-				return "", nil, errors.New("empty slice passed to 'in' query")
+				return safesql.New(""), nil, errors.New("empty slice passed to 'in' query")
 			}
 		} else {
 			meta[i].i = arg
@@ -202,17 +203,18 @@ func In(query string, args ...interface{}) (string, []interface{}, error) {
 	newArgs := make([]interface{}, 0, flatArgsCount)
 
 	var buf strings.Builder
-	buf.Grow(len(query) + len(", ?")*flatArgsCount)
+	rawQuery := query.String()
+	buf.Grow(len(rawQuery) + len(", ?")*flatArgsCount)
 
 	var arg, offset int
 
-	for i := strings.IndexByte(query[offset:], '?'); i != -1; i = strings.IndexByte(query[offset:], '?') {
+	for i := strings.IndexByte(rawQuery[offset:], '?'); i != -1; i = strings.IndexByte(rawQuery[offset:], '?') {
 		if arg >= len(meta) {
 			// if an argument wasn't passed, lets return an error;  this is
 			// not actually how database/sql Exec/Query works, but since we are
 			// creating an argument list programmatically, we want to be able
 			// to catch these programmer errors earlier.
-			return "", nil, errors.New("number of bindVars exceeds arguments")
+			return safesql.New(""), nil, errors.New("number of bindVars exceeds arguments")
 		}
 
 		argMeta := meta[arg]
@@ -228,7 +230,7 @@ func In(query string, args ...interface{}) (string, []interface{}, error) {
 		}
 
 		// write everything up to and including our ? character
-		buf.WriteString(query[:offset+i+1])
+		buf.WriteString(rawQuery[:offset+i+1])
 
 		for si := 1; si < argMeta.length; si++ {
 			buf.WriteString(", ?")
@@ -238,17 +240,17 @@ func In(query string, args ...interface{}) (string, []interface{}, error) {
 
 		// slice the query and reset the offset. this avoids some bookkeeping for
 		// the write after the loop
-		query = query[offset+i+1:]
+		rawQuery = rawQuery[offset+i+1:]
 		offset = 0
 	}
 
-	buf.WriteString(query)
+	buf.WriteString(rawQuery)
 
 	if arg < len(meta) {
-		return "", nil, errors.New("number of bindVars less than number arguments")
+		return safesql.New(""), nil, errors.New("number of bindVars less than number arguments")
 	}
 
-	return buf.String(), newArgs, nil
+	return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(buf.String()), newArgs, nil
 }
 
 func appendReflectSlice(args []interface{}, v reflect.Value, vlen int) []interface{} {

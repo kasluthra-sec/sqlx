@@ -22,6 +22,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/google/go-safeweb/safesql"
+	"github.com/google/go-safeweb/safesql/uncheckedconversions"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 
@@ -210,7 +212,10 @@ func MultiExec(e Execer, query string) {
 		stmts = stmts[:len(stmts)-1]
 	}
 	for _, s := range stmts {
-		_, err := e.Exec(s)
+		// UNSAFE: this is fine for tests when there's no easy alternative
+		// Never do this in production code!
+		ss := uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(s)
+		_, err := e.Exec(ss)
 		if err != nil {
 			fmt.Println(err, s)
 		}
@@ -243,19 +248,19 @@ func RunWithSchema(schema Schema, t *testing.T, test func(db *DB, t *testing.T, 
 
 func loadDefaultFixture(db *DB, t *testing.T) {
 	tx := db.MustBegin()
-	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
-	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "John", "Doe", "johndoeDNE@gmail.net")
-	tx.MustExec(tx.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
-	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
-	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)")), "Jason", "Moiron", "jmoiron@jmoiron.net")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)")), "John", "Doe", "johndoeDNE@gmail.net")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)")), "United States", "New York", "1")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO place (country, telcode) VALUES (?, ?)")), "Hong Kong", "852")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO place (country, telcode) VALUES (?, ?)")), "Singapore", "65")
 	if db.DriverName() == "mysql" {
-		tx.MustExec(tx.Rebind("INSERT INTO capplace (`COUNTRY`, `TELCODE`) VALUES (?, ?)"), "Sarf Efrica", "27")
+		tx.MustExec(tx.Rebind(safesql.New("INSERT INTO capplace (`COUNTRY`, `TELCODE`) VALUES (?, ?)")), "Sarf Efrica", "27")
 	} else {
-		tx.MustExec(tx.Rebind("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)"), "Sarf Efrica", "27")
+		tx.MustExec(tx.Rebind(safesql.New("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)")), "Sarf Efrica", "27")
 	}
-	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
-	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Joe", "1", "4444")
-	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Martin", "2", "4444")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO employees (name, id) VALUES (?, ?)")), "Peter", "4444")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)")), "Joe", "1", "4444")
+	tx.MustExec(tx.Rebind(safesql.New("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)")), "Martin", "2", "4444")
 	tx.Commit()
 }
 
@@ -274,21 +279,21 @@ func TestMissingNames(t *testing.T) {
 		// test Select first
 		pps := []PersonPlus{}
 		// pps lacks added_at destination
-		err := db.Select(&pps, "SELECT * FROM person")
+		err := db.Select(&pps, safesql.New("SELECT * FROM person"))
 		if err == nil {
 			t.Error("Expected missing name from Select to fail, but it did not.")
 		}
 
 		// test Get
 		pp := PersonPlus{}
-		err = db.Get(&pp, "SELECT * FROM person LIMIT 1")
+		err = db.Get(&pp, safesql.New("SELECT * FROM person LIMIT 1"))
 		if err == nil {
 			t.Error("Expected missing name Get to fail, but it did not.")
 		}
 
 		// test naked StructScan
 		pps = []PersonPlus{}
-		rows, err := db.Query("SELECT * FROM person LIMIT 1")
+		rows, err := db.Query(safesql.New("SELECT * FROM person LIMIT 1"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,21 +307,21 @@ func TestMissingNames(t *testing.T) {
 		// now try various things with unsafe set.
 		db = db.Unsafe()
 		pps = []PersonPlus{}
-		err = db.Select(&pps, "SELECT * FROM person")
+		err = db.Select(&pps, safesql.New("SELECT * FROM person"))
 		if err != nil {
 			t.Error(err)
 		}
 
 		// test Get
 		pp = PersonPlus{}
-		err = db.Get(&pp, "SELECT * FROM person LIMIT 1")
+		err = db.Get(&pp, safesql.New("SELECT * FROM person LIMIT 1"))
 		if err != nil {
 			t.Error(err)
 		}
 
 		// test naked StructScan
 		pps = []PersonPlus{}
-		rowsx, err := db.Queryx("SELECT * FROM person LIMIT 1")
+		rowsx, err := db.Queryx(safesql.New("SELECT * FROM person LIMIT 1"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,7 +336,7 @@ func TestMissingNames(t *testing.T) {
 		if !isUnsafe(db) {
 			t.Error("Expected db to be unsafe, but it isn't")
 		}
-		nstmt, err := db.PrepareNamed(`SELECT * FROM person WHERE first_name != :name`)
+		nstmt, err := db.PrepareNamed(safesql.New(`SELECT * FROM person WHERE first_name != :name`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -353,7 +358,7 @@ func TestMissingNames(t *testing.T) {
 		if isUnsafe(db) {
 			t.Error("expected db to be safe but it isn't")
 		}
-		nstmt, err = db.PrepareNamed(`SELECT * FROM person WHERE first_name != :name`)
+		nstmt, err = db.PrepareNamed(safesql.New(`SELECT * FROM person WHERE first_name != :name`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -387,8 +392,8 @@ func TestEmbeddedStructs(t *testing.T) {
 		peopleAndPlaces := []PersonPlace{}
 		err := db.Select(
 			&peopleAndPlaces,
-			`SELECT person.*, place.* FROM
-             person natural join place`)
+			safesql.New(`SELECT person.*, place.* FROM
+             person natural join place`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -403,8 +408,8 @@ func TestEmbeddedStructs(t *testing.T) {
 
 		// test embedded structs with StructScan
 		rows, err := db.Queryx(
-			`SELECT person.*, place.* FROM
-         person natural join place`)
+			safesql.New(`SELECT person.*, place.* FROM
+         person natural join place`))
 		if err != nil {
 			t.Error(err)
 		}
@@ -429,8 +434,8 @@ func TestEmbeddedStructs(t *testing.T) {
 		peopleAndPlacesPtrs := []PersonPlacePtr{}
 		err = db.Select(
 			&peopleAndPlacesPtrs,
-			`SELECT person.*, place.* FROM
-             person natural join place`)
+			safesql.New(`SELECT person.*, place.* FROM
+             person natural join place`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +450,7 @@ func TestEmbeddedStructs(t *testing.T) {
 
 		// test "deep nesting"
 		l3s := []Loop3{}
-		err = db.Select(&l3s, `select * from person`)
+		err = db.Select(&l3s, safesql.New(`select * from person`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -457,7 +462,7 @@ func TestEmbeddedStructs(t *testing.T) {
 
 		// test "embed conflicts"
 		ec := []EmbedConflict{}
-		err = db.Select(&ec, `select * from person`)
+		err = db.Select(&ec, safesql.New(`select * from person`))
 		// I'm torn between erroring here or having some kind of working behavior
 		// in order to allow for more flexibility in destination structs
 		if err != nil {
@@ -485,8 +490,8 @@ func TestJoinQuery(t *testing.T) {
 
 		err := db.Select(
 			&employees,
-			`SELECT employees.*, boss.id "boss.id", boss.name "boss.name" FROM employees
-			  JOIN employees AS boss ON employees.boss_id = boss.id`)
+			safesql.New(`SELECT employees.*, boss.id "boss.id", boss.name "boss.name" FROM employees
+			  JOIN employees AS boss ON employees.boss_id = boss.id`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -522,11 +527,11 @@ func TestJoinQueryNamedPointerStructs(t *testing.T) {
 
 		err := db.Select(
 			&employees,
-			`SELECT emp.name "emp1.name", emp.id "emp1.id", emp.boss_id "emp1.boss_id",
+			safesql.New(`SELECT emp.name "emp1.name", emp.id "emp1.id", emp.boss_id "emp1.boss_id",
 			 emp.name "emp2.name", emp.id "emp2.id", emp.boss_id "emp2.boss_id",
 			 boss.id "boss.id", boss.name "boss.name" FROM employees AS emp
 			  JOIN employees AS boss ON emp.boss_id = boss.id
-			  `)
+			  `))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -545,7 +550,7 @@ func TestJoinQueryNamedPointerStructs(t *testing.T) {
 func TestSelectSliceMapTime(t *testing.T) {
 	RunWithSchema(defaultSchema, t, func(db *DB, t *testing.T, now string) {
 		loadDefaultFixture(db, t)
-		rows, err := db.Queryx("SELECT * FROM person")
+		rows, err := db.Queryx(safesql.New("SELECT * FROM person"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -556,7 +561,7 @@ func TestSelectSliceMapTime(t *testing.T) {
 			}
 		}
 
-		rows, err = db.Queryx("SELECT * FROM person")
+		rows, err = db.Queryx(safesql.New("SELECT * FROM person"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -575,12 +580,12 @@ func TestNilReceiver(t *testing.T) {
 	RunWithSchema(defaultSchema, t, func(db *DB, t *testing.T, now string) {
 		loadDefaultFixture(db, t)
 		var p *Person
-		err := db.Get(p, "SELECT * FROM person LIMIT 1")
+		err := db.Get(p, safesql.New("SELECT * FROM person LIMIT 1"))
 		if err == nil {
 			t.Error("Expected error when getting into nil struct ptr.")
 		}
 		var pp *[]Person
-		err = db.Select(pp, "SELECT * FROM person")
+		err = db.Select(pp, safesql.New("SELECT * FROM person"))
 		if err == nil {
 			t.Error("Expected an error when selecting into nil slice ptr.")
 		}
@@ -631,14 +636,14 @@ func TestNamedQuery(t *testing.T) {
 			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
 		}
 
-		q1 := `INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)`
+		q1 := safesql.New(`INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)`)
 		_, err := db.NamedExec(q1, p)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		p2 := &Person{}
-		rows, err := db.NamedQuery("SELECT * FROM person WHERE first_name=:first_name", p)
+		rows, err := db.NamedQuery(safesql.New("SELECT * FROM person WHERE first_name=:first_name"), p)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -677,14 +682,15 @@ func TestNamedQuery(t *testing.T) {
 		// prepare queries for case sensitivity to test our ToUpper function.
 		// postgres and sqlite accept "", but mysql uses ``;  since Go's multi-line
 		// strings are `` we use "" by default and swap out for MySQL
-		pdb := func(s string, db *DB) string {
+		pdb := func(s safesql.TrustedSQLString, db *DB) safesql.TrustedSQLString {
 			if db.DriverName() == "mysql" {
-				return strings.Replace(s, `"`, "`", -1)
+				rawS := s.String()
+				return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(strings.Replace(rawS, `"`, "`", -1))
 			}
 			return s
 		}
 
-		q1 = `INSERT INTO jsperson ("FIRST", last_name, "EMAIL") VALUES (:FIRST, :last_name, :EMAIL)`
+		q1 = safesql.New(`INSERT INTO jsperson ("FIRST", last_name, "EMAIL") VALUES (:FIRST, :last_name, :EMAIL)`)
 		_, err = db.NamedExec(pdb(q1, db), jp)
 		if err != nil {
 			t.Fatal(err, db.DriverName())
@@ -710,13 +716,13 @@ func TestNamedQuery(t *testing.T) {
 			}
 		}
 
-		ns, err := db.PrepareNamed(pdb(`
+		ns, err := db.PrepareNamed(pdb(safesql.New(`
 			SELECT * FROM jsperson
 			WHERE
 				"FIRST"=:FIRST AND
 				last_name=:last_name AND
 				"EMAIL"=:EMAIL
-		`, db))
+		`), db))
 
 		if err != nil {
 			t.Fatal(err)
@@ -730,13 +736,13 @@ func TestNamedQuery(t *testing.T) {
 
 		// Check exactly the same thing, but with db.NamedQuery, which does not go
 		// through the PrepareNamed/NamedStmt path.
-		rows, err = db.NamedQuery(pdb(`
+		rows, err = db.NamedQuery(pdb(safesql.New(`
 			SELECT * FROM jsperson
 			WHERE
 				"FIRST"=:FIRST AND
 				last_name=:last_name AND
 				"EMAIL"=:EMAIL
-		`, db), jp)
+		`), db), jp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -767,7 +773,7 @@ func TestNamedQuery(t *testing.T) {
 			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
 		}
 
-		q2 := `INSERT INTO place (id, name) VALUES (1, :name)`
+		q2 := safesql.New(`INSERT INTO place (id, name) VALUES (1, :name)`)
 		_, err = db.NamedExec(q2, pl)
 		if err != nil {
 			log.Fatal(err)
@@ -776,14 +782,14 @@ func TestNamedQuery(t *testing.T) {
 		id := 1
 		pp.Place.ID = id
 
-		q3 := `INSERT INTO placeperson (first_name, last_name, email, place_id) VALUES (:first_name, :last_name, :email, :place.id)`
+		q3 := safesql.New(`INSERT INTO placeperson (first_name, last_name, email, place_id) VALUES (:first_name, :last_name, :email, :place.id)`)
 		_, err = db.NamedExec(q3, pp)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		pp2 := &PlacePerson{}
-		rows, err = db.NamedQuery(`
+		rows, err = db.NamedQuery(safesql.New(`
 			SELECT
 				first_name,
 				last_name,
@@ -793,7 +799,7 @@ func TestNamedQuery(t *testing.T) {
 			FROM placeperson
 			INNER JOIN place ON place.id = placeperson.place_id
 			WHERE
-				place.id=:place.id`, pp)
+				place.id=:place.id`), pp)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -836,8 +842,8 @@ func TestNilInserts(t *testing.T) {
 		var v, v2 TT
 		r := db.Rebind
 
-		db.MustExec(r(`INSERT INTO tt (id) VALUES (1)`))
-		db.Get(&v, r(`SELECT * FROM tt`))
+		db.MustExec(r(safesql.New(`INSERT INTO tt (id) VALUES (1)`)))
+		db.Get(&v, r(safesql.New(`SELECT * FROM tt`)))
 		if v.ID != 1 {
 			t.Errorf("Expecting id of 1, got %v", v.ID)
 		}
@@ -851,9 +857,9 @@ func TestNilInserts(t *testing.T) {
 		// as reflectx.FieldByIndexes attempts to allocate nil pointer receivers for
 		// writing.  This was fixed by creating & using the reflectx.FieldByIndexesReadOnly
 		// function.  This next line is important as it provides the only coverage for this.
-		db.NamedExec(`INSERT INTO tt (id, value) VALUES (:id, :value)`, v)
+		db.NamedExec(safesql.New(`INSERT INTO tt (id, value) VALUES (:id, :value)`), v)
 
-		db.Get(&v2, r(`SELECT * FROM tt WHERE id=2`))
+		db.Get(&v2, r(safesql.New(`SELECT * FROM tt WHERE id=2`)))
 		if v.ID != v2.ID {
 			t.Errorf("%v != %v", v.ID, v2.ID)
 		}
@@ -878,12 +884,12 @@ func TestScanError(t *testing.T) {
 			K int
 			V string
 		}
-		_, err := db.Exec(db.Rebind("INSERT INTO kv (k, v) VALUES (?, ?)"), "hi", 1)
+		_, err := db.Exec(db.Rebind(safesql.New("INSERT INTO kv (k, v) VALUES (?, ?)")), "hi", 1)
 		if err != nil {
 			t.Error(err)
 		}
 
-		rows, err := db.Queryx("SELECT * FROM kv")
+		rows, err := db.Queryx(safesql.New("SELECT * FROM kv"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -900,7 +906,7 @@ func TestScanError(t *testing.T) {
 func TestMultiInsert(t *testing.T) {
 	RunWithSchema(defaultSchema, t, func(db *DB, t *testing.T, now string) {
 		loadDefaultFixture(db, t)
-		q := db.Rebind(`INSERT INTO employees (name, id) VALUES (?, ?), (?, ?);`)
+		q := db.Rebind(safesql.New(`INSERT INTO employees (name, id) VALUES (?, ?), (?, ?);`))
 		db.MustExec(q,
 			"Name1", 400,
 			"name2", 500,
@@ -915,14 +921,14 @@ func TestUsage(t *testing.T) {
 	RunWithSchema(defaultSchema, t, func(db *DB, t *testing.T, now string) {
 		loadDefaultFixture(db, t)
 		slicemembers := []SliceMember{}
-		err := db.Select(&slicemembers, "SELECT * FROM place ORDER BY telcode ASC")
+		err := db.Select(&slicemembers, safesql.New("SELECT * FROM place ORDER BY telcode ASC"))
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		people := []Person{}
 
-		err = db.Select(&people, "SELECT * FROM person ORDER BY first_name ASC")
+		err = db.Select(&people, safesql.New("SELECT * FROM person ORDER BY first_name ASC"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -942,7 +948,7 @@ func TestUsage(t *testing.T) {
 		}
 
 		jason = Person{}
-		err = db.Get(&jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Jason")
+		err = db.Get(&jason, db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")), "Jason")
 
 		if err != nil {
 			t.Fatal(err)
@@ -951,7 +957,7 @@ func TestUsage(t *testing.T) {
 			t.Errorf("Expecting to get back Jason, but got %v\n", jason.FirstName)
 		}
 
-		err = db.Get(&jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Foobar")
+		err = db.Get(&jason, db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")), "Foobar")
 		if err == nil {
 			t.Errorf("Expecting an error, got nil\n")
 		}
@@ -961,7 +967,7 @@ func TestUsage(t *testing.T) {
 
 		// The following tests check statement reuse, which was actually a problem
 		// due to copying being done when creating Stmt's which was eventually removed
-		stmt1, err := db.Preparex(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		stmt1, err := db.Preparex(db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -981,7 +987,7 @@ func TestUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		stmt2, err := db.Preparex(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		stmt2, err := db.Preparex(db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -999,7 +1005,7 @@ func TestUsage(t *testing.T) {
 		tx.Commit()
 
 		places := []*Place{}
-		err = db.Select(&places, "SELECT telcode FROM place ORDER BY telcode ASC")
+		err = db.Select(&places, safesql.New("SELECT telcode FROM place ORDER BY telcode ASC"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1011,7 +1017,7 @@ func TestUsage(t *testing.T) {
 		}
 
 		placesptr := []PlacePtr{}
-		err = db.Select(&placesptr, "SELECT * FROM place ORDER BY telcode ASC")
+		err = db.Select(&placesptr, safesql.New("SELECT * FROM place ORDER BY telcode ASC"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1020,7 +1026,7 @@ func TestUsage(t *testing.T) {
 		// if you have null fields and use SELECT *, you must use sql.Null* in your struct
 		// this test also verifies that you can use either a []Struct{} or a []*Struct{}
 		places2 := []Place{}
-		err = db.Select(&places2, "SELECT * FROM place ORDER BY telcode ASC")
+		err = db.Select(&places2, safesql.New("SELECT * FROM place ORDER BY telcode ASC"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1029,14 +1035,14 @@ func TestUsage(t *testing.T) {
 
 		// this should return a type error that &p is not a pointer to a struct slice
 		p := Place{}
-		err = db.Select(&p, "SELECT * FROM place ORDER BY telcode ASC")
+		err = db.Select(&p, safesql.New("SELECT * FROM place ORDER BY telcode ASC"))
 		if err == nil {
 			t.Errorf("Expected an error, argument to select should be a pointer to a struct slice")
 		}
 
 		// this should be an error
 		pl := []Place{}
-		err = db.Select(pl, "SELECT * FROM place ORDER BY telcode ASC")
+		err = db.Select(pl, safesql.New("SELECT * FROM place ORDER BY telcode ASC"))
 		if err == nil {
 			t.Errorf("Expected an error, argument to select should be a pointer to a struct slice, not a slice.")
 		}
@@ -1045,7 +1051,7 @@ func TestUsage(t *testing.T) {
 			t.Errorf("Expected integer telcodes to work, got %#v", places)
 		}
 
-		stmt, err := db.Preparex(db.Rebind("SELECT country, telcode FROM place WHERE telcode > ? ORDER BY telcode ASC"))
+		stmt, err := db.Preparex(db.Rebind(safesql.New("SELECT country, telcode FROM place WHERE telcode > ? ORDER BY telcode ASC")))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1063,7 +1069,7 @@ func TestUsage(t *testing.T) {
 			t.Errorf("Expected the right telcodes, got %#v", places)
 		}
 
-		rows, err := db.Queryx("SELECT * FROM place")
+		rows, err := db.Queryx(safesql.New("SELECT * FROM place"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1075,7 +1081,7 @@ func TestUsage(t *testing.T) {
 			}
 		}
 
-		rows, err = db.Queryx("SELECT * FROM place")
+		rows, err = db.Queryx(safesql.New("SELECT * FROM place"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1091,7 +1097,7 @@ func TestUsage(t *testing.T) {
 			}
 		}
 
-		rows, err = db.Queryx("SELECT * FROM place")
+		rows, err = db.Queryx(safesql.New("SELECT * FROM place"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1107,7 +1113,7 @@ func TestUsage(t *testing.T) {
 
 		// test advanced querying
 		// test that NamedExec works with a map as well as a struct
-		_, err = db.NamedExec("INSERT INTO person (first_name, last_name, email) VALUES (:first, :last, :email)", map[string]interface{}{
+		_, err = db.NamedExec(safesql.New("INSERT INTO person (first_name, last_name, email) VALUES (:first, :last, :email)"), map[string]interface{}{
 			"first": "Bin",
 			"last":  "Smuth",
 			"email": "bensmith@allblacks.nz",
@@ -1118,7 +1124,7 @@ func TestUsage(t *testing.T) {
 
 		// ensure that if the named param happens right at the end it still works
 		// ensure that NamedQuery works with a map[string]interface{}
-		rows, err = db.NamedQuery("SELECT * FROM person WHERE first_name=:first", map[string]interface{}{"first": "Bin"})
+		rows, err = db.NamedQuery(safesql.New("SELECT * FROM person WHERE first_name=:first"), map[string]interface{}{"first": "Bin"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1142,13 +1148,13 @@ func TestUsage(t *testing.T) {
 		ben.Email = "binsmuth@allblacks.nz"
 
 		// Insert via a named query using the struct
-		_, err = db.NamedExec("INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)", ben)
+		_, err = db.NamedExec(safesql.New("INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)"), ben)
 
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		rows, err = db.NamedQuery("SELECT * FROM person WHERE first_name=:first_name", ben)
+		rows, err = db.NamedQuery(safesql.New("SELECT * FROM person WHERE first_name=:first_name"), ben)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1166,14 +1172,14 @@ func TestUsage(t *testing.T) {
 		}
 		// ensure that Get does not panic on emppty result set
 		person := &Person{}
-		err = db.Get(person, "SELECT * FROM person WHERE first_name=$1", "does-not-exist")
+		err = db.Get(person, safesql.New("SELECT * FROM person WHERE first_name=$1"), "does-not-exist")
 		if err == nil {
 			t.Fatal("Should have got an error for Get on non-existent row.")
 		}
 
 		// lets test prepared statements some more
 
-		stmt, err = db.Preparex(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		stmt, err = db.Preparex(db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1195,7 +1201,7 @@ func TestUsage(t *testing.T) {
 		}
 
 		john = Person{}
-		stmt, err = db.Preparex(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		stmt, err = db.Preparex(db.Rebind(safesql.New("SELECT * FROM person WHERE first_name=?")))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1208,7 +1214,7 @@ func TestUsage(t *testing.T) {
 		// THIS USED TO WORK BUT WILL NO LONGER WORK.
 		db.MapperFunc(strings.ToUpper)
 		rsa := CPlace{}
-		err = db.Get(&rsa, "SELECT * FROM capplace;")
+		err = db.Get(&rsa, safesql.New("SELECT * FROM capplace;"))
 		if err != nil {
 			t.Error(err, "in db:", db.DriverName())
 		}
@@ -1218,20 +1224,20 @@ func TestUsage(t *testing.T) {
 		// differently from the original.
 		dbCopy := NewDb(db.DB, db.DriverName())
 		dbCopy.MapperFunc(strings.ToUpper)
-		err = dbCopy.Get(&rsa, "SELECT * FROM capplace;")
+		err = dbCopy.Get(&rsa, safesql.New("SELECT * FROM capplace;"))
 		if err != nil {
 			fmt.Println(db.DriverName())
 			t.Error(err)
 		}
 
-		err = db.Get(&rsa, "SELECT * FROM cappplace;")
+		err = db.Get(&rsa, safesql.New("SELECT * FROM cappplace;"))
 		if err == nil {
 			t.Error("Expected no error, got ", err)
 		}
 
 		// test base type slices
 		var sdest []string
-		rows, err = db.Queryx("SELECT email FROM person ORDER BY email ASC;")
+		rows, err = db.Queryx(safesql.New("SELECT email FROM person ORDER BY email ASC;"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1242,7 +1248,7 @@ func TestUsage(t *testing.T) {
 
 		// test Get with base types
 		var count int
-		err = db.Get(&count, "SELECT count(*) FROM person;")
+		err = db.Get(&count, safesql.New("SELECT count(*) FROM person;"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1252,20 +1258,20 @@ func TestUsage(t *testing.T) {
 
 		// test Get and Select with time.Time, #84
 		var addedAt time.Time
-		err = db.Get(&addedAt, "SELECT added_at FROM person LIMIT 1;")
+		err = db.Get(&addedAt, safesql.New("SELECT added_at FROM person LIMIT 1;"))
 		if err != nil {
 			t.Error(err)
 		}
 
 		var addedAts []time.Time
-		err = db.Select(&addedAts, "SELECT added_at FROM person;")
+		err = db.Select(&addedAts, safesql.New("SELECT added_at FROM person;"))
 		if err != nil {
 			t.Error(err)
 		}
 
 		// test it on a double pointer
 		var pcount *int
-		err = db.Get(&pcount, "SELECT count(*) FROM person;")
+		err = db.Get(&pcount, safesql.New("SELECT count(*) FROM person;"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1275,7 +1281,7 @@ func TestUsage(t *testing.T) {
 
 		// test Select...
 		sdest = []string{}
-		err = db.Select(&sdest, "SELECT first_name FROM person ORDER BY first_name ASC;")
+		err = db.Select(&sdest, safesql.New("SELECT first_name FROM person ORDER BY first_name ASC;"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1287,7 +1293,7 @@ func TestUsage(t *testing.T) {
 		}
 
 		var nsdest []sql.NullString
-		err = db.Select(&nsdest, "SELECT city FROM place ORDER BY city ASC")
+		err = db.Select(&nsdest, safesql.New("SELECT city FROM place ORDER BY city ASC"))
 		if err != nil {
 			t.Error(err)
 		}
@@ -1316,41 +1322,41 @@ func TestDoNotPanicOnConnect(t *testing.T) {
 }
 
 func TestRebind(t *testing.T) {
-	q1 := `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	q2 := `INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	q2 := safesql.New(`INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`)
 
 	s1 := Rebind(DOLLAR, q1)
 	s2 := Rebind(DOLLAR, q2)
 
-	if s1 != `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)` {
+	if s1 != safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`) {
 		t.Errorf("q1 failed")
 	}
 
-	if s2 != `INSERT INTO foo (a, b, c) VALUES ($1, $2, "foo"), ("Hi", $3, $4)` {
+	if s2 != safesql.New(`INSERT INTO foo (a, b, c) VALUES ($1, $2, "foo"), ("Hi", $3, $4)`) {
 		t.Errorf("q2 failed")
 	}
 
 	s1 = Rebind(AT, q1)
 	s2 = Rebind(AT, q2)
 
-	if s1 != `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10)` {
+	if s1 != safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10)`) {
 		t.Errorf("q1 failed")
 	}
 
-	if s2 != `INSERT INTO foo (a, b, c) VALUES (@p1, @p2, "foo"), ("Hi", @p3, @p4)` {
+	if s2 != safesql.New(`INSERT INTO foo (a, b, c) VALUES (@p1, @p2, "foo"), ("Hi", @p3, @p4)`) {
 		t.Errorf("q2 failed")
 	}
 
 	s1 = Rebind(NAMED, q1)
 	s2 = Rebind(NAMED, q2)
 
-	ex1 := `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES ` +
-		`(:arg1, :arg2, :arg3, :arg4, :arg5, :arg6, :arg7, :arg8, :arg9, :arg10)`
+	ex1 := safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES ` +
+		`(:arg1, :arg2, :arg3, :arg4, :arg5, :arg6, :arg7, :arg8, :arg9, :arg10)`)
 	if s1 != ex1 {
 		t.Error("q1 failed on Named params")
 	}
 
-	ex2 := `INSERT INTO foo (a, b, c) VALUES (:arg1, :arg2, "foo"), ("Hi", :arg3, :arg4)`
+	ex2 := safesql.New(`INSERT INTO foo (a, b, c) VALUES (:arg1, :arg2, "foo"), ("Hi", :arg3, :arg4)`)
 	if s2 != ex2 {
 		t.Error("q2 failed on Named params")
 	}
@@ -1358,7 +1364,7 @@ func TestRebind(t *testing.T) {
 
 func TestBindMap(t *testing.T) {
 	// Test that it works..
-	q1 := `INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`)
 	am := map[string]interface{}{
 		"name":  "Jason Moiron",
 		"age":   30,
@@ -1367,7 +1373,7 @@ func TestBindMap(t *testing.T) {
 	}
 
 	bq, args, _ := bindMap(QUESTION, q1, am)
-	expect := `INSERT INTO foo (a, b, c, d) VALUES (?, ?, ?, ?)`
+	expect := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (?, ?, ?, ?)`)
 	if bq != expect {
 		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
 	}
@@ -1436,7 +1442,7 @@ func TestEmbeddedMaps(t *testing.T) {
 			{"Hello, World", PropertyMap{"one": "1", "two": "2"}},
 			{"Thanks, Joy", PropertyMap{"pull": "request"}},
 		}
-		q1 := `INSERT INTO message (string, properties) VALUES (:string, :properties);`
+		q1 := safesql.New(`INSERT INTO message (string, properties) VALUES (:string, :properties);`)
 		for _, m := range messages {
 			_, err := db.NamedExec(q1, m)
 			if err != nil {
@@ -1444,7 +1450,7 @@ func TestEmbeddedMaps(t *testing.T) {
 			}
 		}
 		var count int
-		err := db.Get(&count, "SELECT count(*) FROM message")
+		err := db.Get(&count, safesql.New("SELECT count(*) FROM message"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1453,7 +1459,7 @@ func TestEmbeddedMaps(t *testing.T) {
 		}
 
 		var m Message
-		err = db.Get(&m, "SELECT * FROM message LIMIT 1;")
+		err = db.Get(&m, safesql.New("SELECT * FROM message LIMIT 1;"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1478,26 +1484,26 @@ func TestIssue197(t *testing.T) {
 	RunWithSchema(defaultSchema, t, func(db *DB, t *testing.T, now string) {
 		var err error
 		var v, q Var
-		if err = db.Get(&v, `SELECT '{"a": "b"}' AS raw`); err != nil {
+		if err = db.Get(&v, safesql.New(`SELECT '{"a": "b"}' AS raw`)); err != nil {
 			t.Fatal(err)
 		}
-		if err = db.Get(&q, `SELECT 'null' AS raw`); err != nil {
+		if err = db.Get(&q, safesql.New(`SELECT 'null' AS raw`)); err != nil {
 			t.Fatal(err)
 		}
 
 		var v2, q2 Var2
-		if err = db.Get(&v2, `SELECT '{"a": "b"}' AS raw`); err != nil {
+		if err = db.Get(&v2, safesql.New(`SELECT '{"a": "b"}' AS raw`)); err != nil {
 			t.Fatal(err)
 		}
-		if err = db.Get(&q2, `SELECT 'null' AS raw`); err != nil {
+		if err = db.Get(&q2, safesql.New(`SELECT 'null' AS raw`)); err != nil {
 			t.Fatal(err)
 		}
 
 		var v3, q3 Var3
-		if err = db.QueryRow(`SELECT '{"a": "b"}' AS raw`).Scan(&v3.Raw); err != nil {
+		if err = db.QueryRow(safesql.New(`SELECT '{"a": "b"}' AS raw`)).Scan(&v3.Raw); err != nil {
 			t.Fatal(err)
 		}
-		if err = db.QueryRow(`SELECT '{"c": "d"}' AS raw`).Scan(&q3.Raw); err != nil {
+		if err = db.QueryRow(safesql.New(`SELECT '{"c": "d"}' AS raw`)).Scan(&q3.Raw); err != nil {
 			t.Fatal(err)
 		}
 		t.Fail()
@@ -1507,21 +1513,21 @@ func TestIssue197(t *testing.T) {
 func TestIn(t *testing.T) {
 	// some quite normal situations
 	type tr struct {
-		q    string
+		q    safesql.TrustedSQLString
 		args []interface{}
 		c    int
 	}
 	tests := []tr{
-		{"SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?",
+		{safesql.New("SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?"),
 			[]interface{}{"foo", []int{0, 5, 7, 2, 9}, "bar"},
 			7},
-		{"SELECT * FROM foo WHERE x in (?)",
+		{safesql.New("SELECT * FROM foo WHERE x in (?)"),
 			[]interface{}{[]int{1, 2, 3, 4, 5, 6, 7, 8}},
 			8},
-		{"SELECT * FROM foo WHERE x = ? AND y in (?)",
+		{safesql.New("SELECT * FROM foo WHERE x = ? AND y in (?)"),
 			[]interface{}{[]byte("foo"), []int{0, 5, 3}},
 			4},
-		{"SELECT * FROM foo WHERE x = ? AND y IN (?)",
+		{safesql.New("SELECT * FROM foo WHERE x = ? AND y IN (?)"),
 			[]interface{}{sql.NullString{Valid: false}, []string{"a", "b"}},
 			3},
 	}
@@ -1533,8 +1539,8 @@ func TestIn(t *testing.T) {
 		if len(a) != test.c {
 			t.Errorf("Expected %d args, but got %d (%+v)", test.c, len(a), a)
 		}
-		if strings.Count(q, "?") != test.c {
-			t.Errorf("Expected %d bindVars, got %d", test.c, strings.Count(q, "?"))
+		if strings.Count(q.String(), "?") != test.c {
+			t.Errorf("Expected %d bindVars, got %d", test.c, strings.Count(q.String(), "?"))
 		}
 	}
 
@@ -1542,7 +1548,7 @@ func TestIn(t *testing.T) {
 	// i'm not sure if this is the right behavior;  this query/arg combo
 	// might not work, but we shouldn't parse if we don't need to
 	{
-		orig := "SELECT * FROM foo WHERE x = ? AND y = ?"
+		orig := safesql.New("SELECT * FROM foo WHERE x = ? AND y = ?")
 		q, a, err := In(orig, "foo", "bar", "baz")
 		if err != nil {
 			t.Error(err)
@@ -1557,15 +1563,15 @@ func TestIn(t *testing.T) {
 
 	tests = []tr{
 		// too many bindvars;  slice present so should return error during parse
-		{"SELECT * FROM foo WHERE x = ? and y = ?",
+		{safesql.New("SELECT * FROM foo WHERE x = ? and y = ?"),
 			[]interface{}{"foo", []int{1, 2, 3}, "bar"},
 			0},
 		// empty slice, should return error before parse
-		{"SELECT * FROM foo WHERE x = ?",
+		{safesql.New("SELECT * FROM foo WHERE x = ?"),
 			[]interface{}{[]int{}},
 			0},
 		// too *few* bindvars, should return an error
-		{"SELECT * FROM foo WHERE x = ? AND y in (?)",
+		{safesql.New("SELECT * FROM foo WHERE x = ? AND y in (?)"),
 			[]interface{}{[]int{1, 2, 3}},
 			0},
 	}
@@ -1581,7 +1587,7 @@ func TestIn(t *testing.T) {
 		// tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
 		// tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
 		telcodes := []int{852, 65}
-		q := "SELECT * FROM place WHERE telcode IN(?) ORDER BY telcode"
+		q := safesql.New("SELECT * FROM place WHERE telcode IN(?) ORDER BY telcode")
 		query, args, err := In(q, telcodes)
 		if err != nil {
 			t.Error(err)
@@ -1607,7 +1613,7 @@ func TestIn(t *testing.T) {
 func TestBindStruct(t *testing.T) {
 	var err error
 
-	q1 := `INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`)
 
 	type tt struct {
 		Name  string
@@ -1629,7 +1635,7 @@ func TestBindStruct(t *testing.T) {
 	am := tt{"Jason Moiron", 30, "Jason", "Moiron"}
 
 	bq, args, _ := bindStruct(QUESTION, q1, am, mapper())
-	expect := `INSERT INTO foo (a, b, c, d) VALUES (?, ?, ?, ?)`
+	expect := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (?, ?, ?, ?)`)
 	if bq != expect {
 		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
 	}
@@ -1651,8 +1657,8 @@ func TestBindStruct(t *testing.T) {
 	}
 
 	am2 := tt2{"Hello", "World"}
-	bq, args, _ = bindStruct(QUESTION, "INSERT INTO foo (a, b) VALUES (:field_2, :field_1)", am2, mapper())
-	expect = `INSERT INTO foo (a, b) VALUES (?, ?)`
+	bq, args, _ = bindStruct(QUESTION, safesql.New("INSERT INTO foo (a, b) VALUES (:field_2, :field_1)"), am2, mapper())
+	expect = safesql.New(`INSERT INTO foo (a, b) VALUES (?, ?)`)
 	if bq != expect {
 		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
 	}
@@ -1668,13 +1674,13 @@ func TestBindStruct(t *testing.T) {
 	am3.Field1 = "Hello"
 	am3.Field2 = "World"
 
-	bq, args, err = bindStruct(QUESTION, "INSERT INTO foo (a, b, c) VALUES (:name, :field_1, :field_2)", am3, mapper())
+	bq, args, err = bindStruct(QUESTION, safesql.New("INSERT INTO foo (a, b, c) VALUES (:name, :field_1, :field_2)"), am3, mapper())
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	expect = `INSERT INTO foo (a, b, c) VALUES (?, ?, ?)`
+	expect = safesql.New(`INSERT INTO foo (a, b, c) VALUES (?, ?, ?)`)
 	if bq != expect {
 		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
 	}
@@ -1710,10 +1716,10 @@ func TestEmbeddedLiterals(t *testing.T) {
 			K *string
 		}
 
-		db.MustExec(db.Rebind("INSERT INTO x (k) VALUES (?), (?), (?);"), "one", "two", "three")
+		db.MustExec(db.Rebind(safesql.New("INSERT INTO x (k) VALUES (?), (?), (?);")), "one", "two", "three")
 
 		target := t1{}
-		err := db.Get(&target, db.Rebind("SELECT * FROM x WHERE k=?"), "one")
+		err := db.Get(&target, db.Rebind(safesql.New("SELECT * FROM x WHERE k=?")), "one")
 		if err != nil {
 			t.Error(err)
 		}
@@ -1722,7 +1728,7 @@ func TestEmbeddedLiterals(t *testing.T) {
 		}
 
 		target2 := t2{}
-		err = db.Get(&target2, db.Rebind("SELECT * FROM x WHERE k=?"), "one")
+		err = db.Get(&target2, db.Rebind(safesql.New("SELECT * FROM x WHERE k=?")), "one")
 		if err != nil {
 			t.Error(err)
 		}
@@ -1734,7 +1740,7 @@ func TestEmbeddedLiterals(t *testing.T) {
 
 func BenchmarkBindStruct(b *testing.B) {
 	b.StopTimer()
-	q1 := `INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`)
 	type t struct {
 		Name  string
 		Age   int
@@ -1751,7 +1757,7 @@ func BenchmarkBindStruct(b *testing.B) {
 func TestBindNamedMapper(t *testing.T) {
 	type A map[string]interface{}
 	m := reflectx.NewMapperFunc("db", NameMapper)
-	query, args, err := bindNamedMapper(DOLLAR, `select :x`, A{
+	query, args, err := bindNamedMapper(DOLLAR, safesql.New(`select :x`), A{
 		"x": "X!",
 	}, m)
 	if err != nil {
@@ -1764,7 +1770,7 @@ func TestBindNamedMapper(t *testing.T) {
 		t.Errorf("\ngot:  %q\nwant: %q", got, want)
 	}
 
-	_, _, err = bindNamedMapper(DOLLAR, `select :x`, map[string]string{
+	_, _, err = bindNamedMapper(DOLLAR, safesql.New(`select :x`), map[string]string{
 		"x": "X!",
 	}, m)
 	if err == nil {
@@ -1777,7 +1783,7 @@ func TestBindNamedMapper(t *testing.T) {
 
 func BenchmarkBindMap(b *testing.B) {
 	b.StopTimer()
-	q1 := `INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`)
 	am := map[string]interface{}{
 		"name":  "Jason Moiron",
 		"age":   30,
@@ -1791,7 +1797,7 @@ func BenchmarkBindMap(b *testing.B) {
 }
 
 func BenchmarkIn(b *testing.B) {
-	q := `SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`
+	q := safesql.New(`SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`)
 
 	for i := 0; i < b.N; i++ {
 		_, _, _ = In(q, []interface{}{"foo", []int{0, 5, 7, 2, 9}, "bar"}...)
@@ -1799,7 +1805,7 @@ func BenchmarkIn(b *testing.B) {
 }
 
 func BenchmarkIn1k(b *testing.B) {
-	q := `SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`
+	q := safesql.New(`SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`)
 
 	var vals [1000]interface{}
 
@@ -1809,7 +1815,7 @@ func BenchmarkIn1k(b *testing.B) {
 }
 
 func BenchmarkIn1kInt(b *testing.B) {
-	q := `SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`
+	q := safesql.New(`SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`)
 
 	var vals [1000]int
 
@@ -1819,7 +1825,7 @@ func BenchmarkIn1kInt(b *testing.B) {
 }
 
 func BenchmarkIn1kString(b *testing.B) {
-	q := `SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`
+	q := safesql.New(`SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?`)
 
 	var vals [1000]string
 
@@ -1830,8 +1836,8 @@ func BenchmarkIn1kString(b *testing.B) {
 
 func BenchmarkRebind(b *testing.B) {
 	b.StopTimer()
-	q1 := `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	q2 := `INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	q2 := safesql.New(`INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`)
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -1842,8 +1848,8 @@ func BenchmarkRebind(b *testing.B) {
 
 func BenchmarkRebindBuffer(b *testing.B) {
 	b.StopTimer()
-	q1 := `INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	q2 := `INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`
+	q1 := safesql.New(`INSERT INTO foo (a, b, c, d, e, f, g, h, i) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	q2 := safesql.New(`INSERT INTO foo (a, b, c) VALUES (?, ?, "foo"), ("Hi", ?, ?)`)
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -1854,11 +1860,11 @@ func BenchmarkRebindBuffer(b *testing.B) {
 
 func TestIn130Regression(t *testing.T) {
 	t.Run("[]interface{}{}", func(t *testing.T) {
-		q, args, err := In("SELECT * FROM people WHERE name IN (?)", []interface{}{[]string{"gopher"}}...)
+		q, args, err := In(safesql.New("SELECT * FROM people WHERE name IN (?)"), []interface{}{[]string{"gopher"}}...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if q != "SELECT * FROM people WHERE name IN (?)" {
+		if q != safesql.New("SELECT * FROM people WHERE name IN (?)") {
 			t.Errorf("got=%v", q)
 		}
 		t.Log(args)
@@ -1873,11 +1879,11 @@ func TestIn130Regression(t *testing.T) {
 	})
 
 	t.Run("[]string{}", func(t *testing.T) {
-		q, args, err := In("SELECT * FROM people WHERE name IN (?)", []string{"gopher"})
+		q, args, err := In(safesql.New("SELECT * FROM people WHERE name IN (?)"), []string{"gopher"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if q != "SELECT * FROM people WHERE name IN (?)" {
+		if q != safesql.New("SELECT * FROM people WHERE name IN (?)") {
 			t.Errorf("got=%v", q)
 		}
 		t.Log(args)
@@ -1897,7 +1903,7 @@ func TestSelectReset(t *testing.T) {
 		loadDefaultFixture(db, t)
 
 		filledDest := []string{"a", "b", "c"}
-		err := db.Select(&filledDest, "SELECT first_name FROM person ORDER BY first_name ASC;")
+		err := db.Select(&filledDest, safesql.New("SELECT first_name FROM person ORDER BY first_name ASC;"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1912,7 +1918,7 @@ func TestSelectReset(t *testing.T) {
 		}
 
 		var emptyDest []string
-		err = db.Select(&emptyDest, "SELECT first_name FROM person WHERE first_name = 'Jack';")
+		err = db.Select(&emptyDest, safesql.New("SELECT first_name FROM person WHERE first_name = 'Jack';"))
 		if err != nil {
 			t.Fatal(err)
 		}

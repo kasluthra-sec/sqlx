@@ -12,6 +12,7 @@ import (
 	"reflect"
 
 	"github.com/google/go-safeweb/safesql"
+	"github.com/google/go-safeweb/safesql/uncheckedconversions"
 )
 
 // ConnectContext to a database and verify with a ping.
@@ -26,19 +27,19 @@ func ConnectContext(ctx context.Context, driverName, dataSourceName string) (*DB
 
 // QueryerContext is an interface used by GetContext and SelectContext
 type QueryerContext interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryxContext(ctx context.Context, query string, args ...interface{}) (*Rows, error)
-	QueryRowxContext(ctx context.Context, query string, args ...interface{}) *Row
+	QueryContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*sql.Rows, error)
+	QueryxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*Rows, error)
+	QueryRowxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) *Row
 }
 
 // PreparerContext is an interface used by PreparexContext.
 type PreparerContext interface {
-	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	PrepareContext(ctx context.Context, query safesql.TrustedSQLString) (*sql.Stmt, error)
 }
 
 // ExecerContext is an interface used by MustExecContext and LoadFileContext
 type ExecerContext interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (sql.Result, error)
 }
 
 // ExtContext is a union interface which can bind, query, and exec, with Context
@@ -54,7 +55,7 @@ type ExtContext interface {
 // scannable, then the result set must have only one column.  Otherwise,
 // StructScan is used. The *sql.Rows are closed automatically.
 // Any placeholder parameters are replaced with supplied args.
-func SelectContext(ctx context.Context, q QueryerContext, dest interface{}, query string, args ...interface{}) error {
+func SelectContext(ctx context.Context, q QueryerContext, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	rows, err := q.QueryxContext(ctx, query, args...)
 	if err != nil {
 		return err
@@ -68,7 +69,7 @@ func SelectContext(ctx context.Context, q QueryerContext, dest interface{}, quer
 //
 // The provided context is used for the preparation of the statement, not for
 // the execution of the statement.
-func PreparexContext(ctx context.Context, p PreparerContext, query string) (*Stmt, error) {
+func PreparexContext(ctx context.Context, p PreparerContext, query safesql.TrustedSQLString) (*Stmt, error) {
 	s, err := p.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -81,7 +82,7 @@ func PreparexContext(ctx context.Context, p PreparerContext, query string) (*Stm
 // column. Otherwise, StructScan is used.  Get will return sql.ErrNoRows like
 // row.Scan would. Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func GetContext(ctx context.Context, q QueryerContext, dest interface{}, query string, args ...interface{}) error {
+func GetContext(ctx context.Context, q QueryerContext, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	r := q.QueryRowxContext(ctx, query, args...)
 	return r.scanAny(dest, false)
 }
@@ -106,13 +107,14 @@ func LoadFileContext(ctx context.Context, e ExecerContext, path string) (*sql.Re
 	if err != nil {
 		return nil, err
 	}
-	res, err := e.ExecContext(ctx, string(contents))
+	// UNSAFE: for now assuming that if we use this pattern it does not contain untrusted data
+	res, err := e.ExecContext(ctx, uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(string(contents)))
 	return &res, err
 }
 
 // MustExecContext execs the query using e and panics if there was an error.
 // Any placeholder parameters are replaced with supplied args.
-func MustExecContext(ctx context.Context, e ExecerContext, query string, args ...interface{}) sql.Result {
+func MustExecContext(ctx context.Context, e ExecerContext, query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	res, err := e.ExecContext(ctx, query, args...)
 	if err != nil {
 		panic(err)
@@ -121,32 +123,32 @@ func MustExecContext(ctx context.Context, e ExecerContext, query string, args ..
 }
 
 // PrepareNamedContext returns an sqlx.NamedStmt
-func (db *DB) PrepareNamedContext(ctx context.Context, query string) (*NamedStmt, error) {
+func (db *DB) PrepareNamedContext(ctx context.Context, query safesql.TrustedSQLString) (*NamedStmt, error) {
 	return prepareNamedContext(ctx, db, query)
 }
 
 // NamedQueryContext using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedQueryContext(ctx context.Context, query string, arg interface{}) (*Rows, error) {
+func (db *DB) NamedQueryContext(ctx context.Context, query safesql.TrustedSQLString, arg interface{}) (*Rows, error) {
 	return NamedQueryContext(ctx, db, query, arg)
 }
 
 // NamedExecContext using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
+func (db *DB) NamedExecContext(ctx context.Context, query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	return NamedExecContext(ctx, db, query, arg)
 }
 
 // SelectContext using this DB.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (db *DB) SelectContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return SelectContext(ctx, db, dest, query, args...)
 }
 
 // GetContext using this DB.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (db *DB) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (db *DB) GetContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return GetContext(ctx, db, dest, query, args...)
 }
 
@@ -154,7 +156,7 @@ func (db *DB) GetContext(ctx context.Context, dest interface{}, query string, ar
 //
 // The provided context is used for the preparation of the statement, not for
 // the execution of the statement.
-func (db *DB) PreparexContext(ctx context.Context, query string) (*Stmt, error) {
+func (db *DB) PreparexContext(ctx context.Context, query safesql.TrustedSQLString) (*Stmt, error) {
 	return PreparexContext(ctx, db, query)
 }
 
@@ -192,7 +194,7 @@ func (db *DB) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *Tx {
 
 // MustExecContext (panic) runs MustExec using this database.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) MustExecContext(ctx context.Context, query string, args ...interface{}) sql.Result {
+func (db *DB) MustExecContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	return MustExecContext(ctx, db, query, args...)
 }
 
@@ -208,7 +210,7 @@ func (db *DB) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{Tx: tx, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, err
+	return &Tx{Tx: &tx, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, err
 }
 
 // Connx returns an *sqlx.Conn instead of an *sql.Conn.
@@ -218,7 +220,7 @@ func (db *DB) Connx(ctx context.Context) (*Conn, error) {
 		return nil, err
 	}
 
-	return &Conn{Conn: conn, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, nil
+	return &Conn{Conn: &conn, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, nil
 }
 
 // BeginTxx begins a transaction and returns an *sqlx.Tx instead of an
@@ -233,19 +235,19 @@ func (c *Conn) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{Tx: tx, driverName: c.driverName, unsafe: c.unsafe, Mapper: c.Mapper}, err
+	return &Tx{Tx: &tx, driverName: c.driverName, unsafe: c.unsafe, Mapper: c.Mapper}, err
 }
 
 // SelectContext using this Conn.
 // Any placeholder parameters are replaced with supplied args.
-func (c *Conn) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (c *Conn) SelectContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return SelectContext(ctx, c, dest, query, args...)
 }
 
 // GetContext using this Conn.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (c *Conn) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (c *Conn) GetContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return GetContext(ctx, c, dest, query, args...)
 }
 
@@ -253,13 +255,13 @@ func (c *Conn) GetContext(ctx context.Context, dest interface{}, query string, a
 //
 // The provided context is used for the preparation of the statement, not for
 // the execution of the statement.
-func (c *Conn) PreparexContext(ctx context.Context, query string) (*Stmt, error) {
+func (c *Conn) PreparexContext(ctx context.Context, query safesql.TrustedSQLString) (*Stmt, error) {
 	return PreparexContext(ctx, c, query)
 }
 
 // QueryxContext queries the database and returns an *sqlx.Rows.
 // Any placeholder parameters are replaced with supplied args.
-func (c *Conn) QueryxContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+func (c *Conn) QueryxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := c.Conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -269,13 +271,13 @@ func (c *Conn) QueryxContext(ctx context.Context, query string, args ...interfac
 
 // QueryRowxContext queries the database and returns an *sqlx.Row.
 // Any placeholder parameters are replaced with supplied args.
-func (c *Conn) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *Row {
+func (c *Conn) QueryRowxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := c.Conn.QueryContext(ctx, query, args...)
 	return &Row{rows: rows, err: err, unsafe: c.unsafe, Mapper: c.Mapper}
 }
 
 // Rebind a query within a Conn's bindvar type.
-func (c *Conn) Rebind(query string) string {
+func (c *Conn) Rebind(query safesql.TrustedSQLString) safesql.TrustedSQLString {
 	return Rebind(BindType(c.driverName), query)
 }
 
@@ -310,24 +312,24 @@ func (tx *Tx) NamedStmtContext(ctx context.Context, stmt *NamedStmt) *NamedStmt 
 //
 // The provided context is used for the preparation of the statement, not for
 // the execution of the statement.
-func (tx *Tx) PreparexContext(ctx context.Context, query string) (*Stmt, error) {
+func (tx *Tx) PreparexContext(ctx context.Context, query safesql.TrustedSQLString) (*Stmt, error) {
 	return PreparexContext(ctx, tx, query)
 }
 
 // PrepareNamedContext returns an sqlx.NamedStmt
-func (tx *Tx) PrepareNamedContext(ctx context.Context, query string) (*NamedStmt, error) {
+func (tx *Tx) PrepareNamedContext(ctx context.Context, query safesql.TrustedSQLString) (*NamedStmt, error) {
 	return prepareNamedContext(ctx, tx, query)
 }
 
 // MustExecContext runs MustExecContext within a transaction.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) MustExecContext(ctx context.Context, query string, args ...interface{}) sql.Result {
+func (tx *Tx) MustExecContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	return MustExecContext(ctx, tx, query, args...)
 }
 
 // QueryxContext within a transaction and context.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) QueryxContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+func (tx *Tx) QueryxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := tx.Tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -337,69 +339,69 @@ func (tx *Tx) QueryxContext(ctx context.Context, query string, args ...interface
 
 // SelectContext within a transaction and context.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) SelectContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return SelectContext(ctx, tx, dest, query, args...)
 }
 
 // GetContext within a transaction and context.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (tx *Tx) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) GetContext(ctx context.Context, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return GetContext(ctx, tx, dest, query, args...)
 }
 
 // QueryRowxContext within a transaction and context.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *Row {
+func (tx *Tx) QueryRowxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := tx.Tx.QueryContext(ctx, query, args...)
 	return &Row{rows: rows, err: err, unsafe: tx.unsafe, Mapper: tx.Mapper}
 }
 
 // NamedExecContext using this Tx.
 // Any named placeholder parameters are replaced with fields from arg.
-func (tx *Tx) NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
+func (tx *Tx) NamedExecContext(ctx context.Context, query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	return NamedExecContext(ctx, tx, query, arg)
 }
 
 // SelectContext using the prepared statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) SelectContext(ctx context.Context, dest interface{}, args ...interface{}) error {
-	return SelectContext(ctx, &qStmt{s}, dest, "", args...)
+	return SelectContext(ctx, &qStmt{s}, dest, safesql.New(""), args...)
 }
 
 // GetContext using the prepared statement.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (s *Stmt) GetContext(ctx context.Context, dest interface{}, args ...interface{}) error {
-	return GetContext(ctx, &qStmt{s}, dest, "", args...)
+	return GetContext(ctx, &qStmt{s}, dest, safesql.New(""), args...)
 }
 
 // MustExecContext (panic) using this statement.  Note that the query portion of
 // the error output will be blank, as Stmt does not expose its query.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) MustExecContext(ctx context.Context, args ...interface{}) sql.Result {
-	return MustExecContext(ctx, &qStmt{s}, "", args...)
+	return MustExecContext(ctx, &qStmt{s}, safesql.New(""), args...)
 }
 
 // QueryRowxContext using this statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) QueryRowxContext(ctx context.Context, args ...interface{}) *Row {
 	qs := &qStmt{s}
-	return qs.QueryRowxContext(ctx, "", args...)
+	return qs.QueryRowxContext(ctx, safesql.New(""), args...)
 }
 
 // QueryxContext using this statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) QueryxContext(ctx context.Context, args ...interface{}) (*Rows, error) {
 	qs := &qStmt{s}
-	return qs.QueryxContext(ctx, "", args...)
+	return qs.QueryxContext(ctx, safesql.New(""), args...)
 }
 
-func (q *qStmt) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (q *qStmt) QueryContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*sql.Rows, error) {
 	return q.Stmt.QueryContext(ctx, args...)
 }
 
-func (q *qStmt) QueryxContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+func (q *qStmt) QueryxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := q.Stmt.QueryContext(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -407,11 +409,11 @@ func (q *qStmt) QueryxContext(ctx context.Context, query string, args ...interfa
 	return &Rows{Rows: r, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}, err
 }
 
-func (q *qStmt) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *Row {
+func (q *qStmt) QueryRowxContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := q.Stmt.QueryContext(ctx, args...)
 	return &Row{rows: rows, err: err, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}
 }
 
-func (q *qStmt) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (q *qStmt) ExecContext(ctx context.Context, query safesql.TrustedSQLString, args ...interface{}) (sql.Result, error) {
 	return q.Stmt.ExecContext(ctx, args...)
 }

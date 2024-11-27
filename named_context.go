@@ -6,6 +6,8 @@ package sqlx
 import (
 	"context"
 	"database/sql"
+
+	"github.com/google/go-safeweb/safesql"
 )
 
 // A union interface of contextPreparer and binder, required to be able to
@@ -15,9 +17,9 @@ type namedPreparerContext interface {
 	binder
 }
 
-func prepareNamedContext(ctx context.Context, p namedPreparerContext, query string) (*NamedStmt, error) {
+func prepareNamedContext(ctx context.Context, p namedPreparerContext, query safesql.TrustedSQLString) (*NamedStmt, error) {
 	bindType := BindType(p.DriverName())
-	q, args, err := compileNamedQuery([]byte(query), bindType)
+	q, args, err := compileNamedQuery(query, bindType)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (n *NamedStmt) GetContext(ctx context.Context, dest interface{}, arg interf
 // NamedQueryContext binds a named query and then runs Query on the result using the
 // provided Ext (sqlx.Tx, sqlx.Db).  It works with both structs and with
 // map[string]interface{} types.
-func NamedQueryContext(ctx context.Context, e ExtContext, query string, arg interface{}) (*Rows, error) {
+func NamedQueryContext(ctx context.Context, e ExtContext, query safesql.TrustedSQLString, arg interface{}) (*Rows, error) {
 	q, args, err := bindNamedMapper(BindType(e.DriverName()), query, arg, mapperFor(e))
 	if err != nil {
 		return nil, err
@@ -124,7 +126,7 @@ func NamedQueryContext(ctx context.Context, e ExtContext, query string, arg inte
 // NamedExecContext uses BindStruct to get a query executable by the driver and
 // then runs Exec on the result.  Returns an error from the binding
 // or the query execution itself.
-func NamedExecContext(ctx context.Context, e ExtContext, query string, arg interface{}) (sql.Result, error) {
+func NamedExecContext(ctx context.Context, e ExtContext, query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	q, args, err := bindNamedMapper(BindType(e.DriverName()), query, arg, mapperFor(e))
 	if err != nil {
 		return nil, err

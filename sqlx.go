@@ -383,7 +383,7 @@ func (db *DB) PrepareNamed(query safesql.TrustedSQLString) (*NamedStmt, error) {
 
 // Conn is a wrapper around sql.Conn with extra functionality
 type Conn struct {
-	*sql.Conn
+	*safesql.Conn
 	driverName string
 	unsafe     bool
 	Mapper     *reflectx.Mapper
