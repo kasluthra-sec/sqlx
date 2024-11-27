@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/google/go-safeweb/safesql"
+	"github.com/google/go-safeweb/safesql/uncheckedconversions"
 	"github.com/jmoiron/sqlx/reflectx"
 )
 
@@ -76,21 +77,21 @@ type ColScanner interface {
 
 // Queryer is an interface used by Get and Select
 type Queryer interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	Queryx(query string, args ...interface{}) (*Rows, error)
-	QueryRowx(query string, args ...interface{}) *Row
+	Query(query safesql.TrustedSQLString, args ...interface{}) (*sql.Rows, error)
+	Queryx(query safesql.TrustedSQLString, args ...interface{}) (*Rows, error)
+	QueryRowx(query safesql.TrustedSQLString, args ...interface{}) *Row
 }
 
 // Execer is an interface used by MustExec and LoadFile
 type Execer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Exec(query safesql.TrustedSQLString, args ...interface{}) (sql.Result, error)
 }
 
 // Binder is an interface for something which can bind queries (Tx, DB)
 type binder interface {
 	DriverName() string
-	Rebind(string) string
-	BindNamed(string, interface{}) (string, []interface{}, error)
+	Rebind(safesql.TrustedSQLString) safesql.TrustedSQLString
+	BindNamed(safesql.TrustedSQLString, interface{}) (safesql.TrustedSQLString, []interface{}, error)
 }
 
 // Ext is a union interface which can bind, query, and exec, used by
@@ -103,7 +104,7 @@ type Ext interface {
 
 // Preparer is an interface used by Preparex.
 type Preparer interface {
-	Prepare(query string) (*sql.Stmt, error)
+	Prepare(query safesql.TrustedSQLString) (*sql.Stmt, error)
 }
 
 // determine if any of our extensions are unsafe
@@ -286,7 +287,7 @@ func (db *DB) MapperFunc(mf func(string) string) {
 }
 
 // Rebind transforms a query from QUESTION to the DB driver's bindvar type.
-func (db *DB) Rebind(query string) string {
+func (db *DB) Rebind(query safesql.TrustedSQLString) safesql.TrustedSQLString {
 	return Rebind(BindType(db.driverName), query)
 }
 
@@ -299,32 +300,32 @@ func (db *DB) Unsafe() *DB {
 }
 
 // BindNamed binds a query using the DB driver's bindvar type.
-func (db *DB) BindNamed(query string, arg interface{}) (string, []interface{}, error) {
+func (db *DB) BindNamed(query safesql.TrustedSQLString, arg interface{}) (safesql.TrustedSQLString, []interface{}, error) {
 	return bindNamedMapper(BindType(db.driverName), query, arg, db.Mapper)
 }
 
 // NamedQuery using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedQuery(query string, arg interface{}) (*Rows, error) {
+func (db *DB) NamedQuery(query safesql.TrustedSQLString, arg interface{}) (*Rows, error) {
 	return NamedQuery(db, query, arg)
 }
 
 // NamedExec using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedExec(query string, arg interface{}) (sql.Result, error) {
+func (db *DB) NamedExec(query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	return NamedExec(db, query, arg)
 }
 
 // Select using this DB.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) Select(dest interface{}, query string, args ...interface{}) error {
+func (db *DB) Select(dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return Select(db, dest, query, args...)
 }
 
 // Get using this DB.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (db *DB) Get(dest interface{}, query string, args ...interface{}) error {
+func (db *DB) Get(dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return Get(db, dest, query, args...)
 }
 
@@ -344,7 +345,7 @@ func (db *DB) Beginx() (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{Tx: tx, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, err
+	return &Tx{Tx: &tx, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, err
 }
 
 // Queryx queries the database and returns an *sqlx.Rows.
@@ -366,17 +367,17 @@ func (db *DB) QueryRowx(query safesql.TrustedSQLString, args ...interface{}) *Ro
 
 // MustExec (panic) runs MustExec using this database.
 // Any placeholder parameters are replaced with supplied args.
-func (db *DB) MustExec(query string, args ...interface{}) sql.Result {
+func (db *DB) MustExec(query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	return MustExec(db, query, args...)
 }
 
 // Preparex returns an sqlx.Stmt instead of a sql.Stmt
-func (db *DB) Preparex(query string) (*Stmt, error) {
+func (db *DB) Preparex(query safesql.TrustedSQLString) (*Stmt, error) {
 	return Preparex(db, query)
 }
 
 // PrepareNamed returns an sqlx.NamedStmt
-func (db *DB) PrepareNamed(query string) (*NamedStmt, error) {
+func (db *DB) PrepareNamed(query safesql.TrustedSQLString) (*NamedStmt, error) {
 	return prepareNamed(db, query)
 }
 
@@ -390,7 +391,7 @@ type Conn struct {
 
 // Tx is an sqlx wrapper around sql.Tx with extra functionality
 type Tx struct {
-	*sql.Tx
+	*safesql.Tx
 	driverName string
 	unsafe     bool
 	Mapper     *reflectx.Mapper
@@ -402,7 +403,7 @@ func (tx *Tx) DriverName() string {
 }
 
 // Rebind a query within a transaction's bindvar type.
-func (tx *Tx) Rebind(query string) string {
+func (tx *Tx) Rebind(query safesql.TrustedSQLString) safesql.TrustedSQLString {
 	return Rebind(BindType(tx.driverName), query)
 }
 
@@ -413,31 +414,31 @@ func (tx *Tx) Unsafe() *Tx {
 }
 
 // BindNamed binds a query within a transaction's bindvar type.
-func (tx *Tx) BindNamed(query string, arg interface{}) (string, []interface{}, error) {
+func (tx *Tx) BindNamed(query safesql.TrustedSQLString, arg interface{}) (safesql.TrustedSQLString, []interface{}, error) {
 	return bindNamedMapper(BindType(tx.driverName), query, arg, tx.Mapper)
 }
 
 // NamedQuery within a transaction.
 // Any named placeholder parameters are replaced with fields from arg.
-func (tx *Tx) NamedQuery(query string, arg interface{}) (*Rows, error) {
+func (tx *Tx) NamedQuery(query safesql.TrustedSQLString, arg interface{}) (*Rows, error) {
 	return NamedQuery(tx, query, arg)
 }
 
 // NamedExec a named query within a transaction.
 // Any named placeholder parameters are replaced with fields from arg.
-func (tx *Tx) NamedExec(query string, arg interface{}) (sql.Result, error) {
+func (tx *Tx) NamedExec(query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	return NamedExec(tx, query, arg)
 }
 
 // Select within a transaction.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) Select(dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) Select(dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return Select(tx, dest, query, args...)
 }
 
 // Queryx within a transaction.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) Queryx(query string, args ...interface{}) (*Rows, error) {
+func (tx *Tx) Queryx(query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := tx.Tx.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -447,7 +448,7 @@ func (tx *Tx) Queryx(query string, args ...interface{}) (*Rows, error) {
 
 // QueryRowx within a transaction.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) QueryRowx(query string, args ...interface{}) *Row {
+func (tx *Tx) QueryRowx(query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := tx.Tx.Query(query, args...)
 	return &Row{rows: rows, err: err, unsafe: tx.unsafe, Mapper: tx.Mapper}
 }
@@ -455,18 +456,18 @@ func (tx *Tx) QueryRowx(query string, args ...interface{}) *Row {
 // Get within a transaction.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (tx *Tx) Get(dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) Get(dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	return Get(tx, dest, query, args...)
 }
 
 // MustExec runs MustExec within a transaction.
 // Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) MustExec(query string, args ...interface{}) sql.Result {
+func (tx *Tx) MustExec(query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	return MustExec(tx, query, args...)
 }
 
 // Preparex  a statement within a transaction.
-func (tx *Tx) Preparex(query string) (*Stmt, error) {
+func (tx *Tx) Preparex(query safesql.TrustedSQLString) (*Stmt, error) {
 	return Preparex(tx, query)
 }
 
@@ -497,7 +498,7 @@ func (tx *Tx) NamedStmt(stmt *NamedStmt) *NamedStmt {
 }
 
 // PrepareNamed returns an sqlx.NamedStmt
-func (tx *Tx) PrepareNamed(query string) (*NamedStmt, error) {
+func (tx *Tx) PrepareNamed(query safesql.TrustedSQLString) (*NamedStmt, error) {
 	return prepareNamed(tx, query)
 }
 
@@ -517,46 +518,46 @@ func (s *Stmt) Unsafe() *Stmt {
 // Select using the prepared statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) Select(dest interface{}, args ...interface{}) error {
-	return Select(&qStmt{s}, dest, "", args...)
+	return Select(&qStmt{s}, dest, safesql.New(""), args...)
 }
 
 // Get using the prepared statement.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (s *Stmt) Get(dest interface{}, args ...interface{}) error {
-	return Get(&qStmt{s}, dest, "", args...)
+	return Get(&qStmt{s}, dest, safesql.New(""), args...)
 }
 
 // MustExec (panic) using this statement.  Note that the query portion of the error
 // output will be blank, as Stmt does not expose its query.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) MustExec(args ...interface{}) sql.Result {
-	return MustExec(&qStmt{s}, "", args...)
+	return MustExec(&qStmt{s}, safesql.New(""), args...)
 }
 
 // QueryRowx using this statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) QueryRowx(args ...interface{}) *Row {
 	qs := &qStmt{s}
-	return qs.QueryRowx("", args...)
+	return qs.QueryRowx(safesql.New(""), args...)
 }
 
 // Queryx using this statement.
 // Any placeholder parameters are replaced with supplied args.
 func (s *Stmt) Queryx(args ...interface{}) (*Rows, error) {
 	qs := &qStmt{s}
-	return qs.Queryx("", args...)
+	return qs.Queryx(safesql.New(""), args...)
 }
 
 // qStmt is an unexposed wrapper which lets you use a Stmt as a Queryer & Execer by
 // implementing those interfaces and ignoring the `query` argument.
 type qStmt struct{ *Stmt }
 
-func (q *qStmt) Query(query string, args ...interface{}) (*sql.Rows, error) {
+func (q *qStmt) Query(query safesql.TrustedSQLString, args ...interface{}) (*sql.Rows, error) {
 	return q.Stmt.Query(args...)
 }
 
-func (q *qStmt) Queryx(query string, args ...interface{}) (*Rows, error) {
+func (q *qStmt) Queryx(query safesql.TrustedSQLString, args ...interface{}) (*Rows, error) {
 	r, err := q.Stmt.Query(args...)
 	if err != nil {
 		return nil, err
@@ -564,12 +565,12 @@ func (q *qStmt) Queryx(query string, args ...interface{}) (*Rows, error) {
 	return &Rows{Rows: r, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}, err
 }
 
-func (q *qStmt) QueryRowx(query string, args ...interface{}) *Row {
+func (q *qStmt) QueryRowx(query safesql.TrustedSQLString, args ...interface{}) *Row {
 	rows, err := q.Stmt.Query(args...)
 	return &Row{rows: rows, err: err, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}
 }
 
-func (q *qStmt) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (q *qStmt) Exec(query safesql.TrustedSQLString, args ...interface{}) (sql.Result, error) {
 	return q.Stmt.Exec(args...)
 }
 
@@ -661,7 +662,7 @@ func MustConnect(driverName, dataSourceName string) *DB {
 }
 
 // Preparex prepares a statement.
-func Preparex(p Preparer, query string) (*Stmt, error) {
+func Preparex(p Preparer, query safesql.TrustedSQLString) (*Stmt, error) {
 	s, err := p.Prepare(query)
 	if err != nil {
 		return nil, err
@@ -674,7 +675,7 @@ func Preparex(p Preparer, query string) (*Stmt, error) {
 // the result set must have only one column.  Otherwise, StructScan is used.
 // The *sql.Rows are closed automatically.
 // Any placeholder parameters are replaced with supplied args.
-func Select(q Queryer, dest interface{}, query string, args ...interface{}) error {
+func Select(q Queryer, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	rows, err := q.Queryx(query, args...)
 	if err != nil {
 		return err
@@ -689,7 +690,7 @@ func Select(q Queryer, dest interface{}, query string, args ...interface{}) erro
 // StructScan is used.  Get will return sql.ErrNoRows like row.Scan would.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func Get(q Queryer, dest interface{}, query string, args ...interface{}) error {
+func Get(q Queryer, dest interface{}, query safesql.TrustedSQLString, args ...interface{}) error {
 	r := q.QueryRowx(query, args...)
 	return r.scanAny(dest, false)
 }
@@ -714,13 +715,14 @@ func LoadFile(e Execer, path string) (*sql.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := e.Exec(string(contents))
+	// UNSAFE: for now assuming that if we use this pattern it does not contain untrusted data
+	res, err := e.Exec(uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(string(contents)))
 	return &res, err
 }
 
 // MustExec execs the query using e and panics if there was an error.
 // Any placeholder parameters are replaced with supplied args.
-func MustExec(e Execer, query string, args ...interface{}) sql.Result {
+func MustExec(e Execer, query safesql.TrustedSQLString, args ...interface{}) sql.Result {
 	res, err := e.Exec(query, args...)
 	if err != nil {
 		panic(err)

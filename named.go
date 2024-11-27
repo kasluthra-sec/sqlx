@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"unicode"
 
+	"github.com/google/go-safeweb/safesql"
+	"github.com/google/go-safeweb/safesql/uncheckedconversions"
 	"github.com/jmoiron/sqlx/reflectx"
 )
 
@@ -28,7 +30,7 @@ import (
 // how you would execute a NamedQuery, but pass in a struct or map when executing.
 type NamedStmt struct {
 	Params      []string
-	QueryString string
+	QueryString safesql.TrustedSQLString
 	Stmt        *Stmt
 }
 
@@ -129,9 +131,9 @@ type namedPreparer interface {
 	binder
 }
 
-func prepareNamed(p namedPreparer, query string) (*NamedStmt, error) {
+func prepareNamed(p namedPreparer, query safesql.TrustedSQLString) (*NamedStmt, error) {
 	bindType := BindType(p.DriverName())
-	q, args, err := compileNamedQuery([]byte(query), bindType)
+	q, args, err := compileNamedQuery(query, bindType)
 	if err != nil {
 		return nil, err
 	}
@@ -210,15 +212,15 @@ func bindMapArgs(names []string, arg map[string]interface{}) ([]interface{}, err
 // bindStruct binds a named parameter query with fields from a struct argument.
 // The rules for binding field names to parameter names follow the same
 // conventions as for StructScan, including obeying the `db` struct tags.
-func bindStruct(bindType int, query string, arg interface{}, m *reflectx.Mapper) (string, []interface{}, error) {
-	bound, names, err := compileNamedQuery([]byte(query), bindType)
+func bindStruct(bindType int, query safesql.TrustedSQLString, arg interface{}, m *reflectx.Mapper) (safesql.TrustedSQLString, []interface{}, error) {
+	bound, names, err := compileNamedQuery(query, bindType)
 	if err != nil {
-		return "", []interface{}{}, err
+		return safesql.New(""), []interface{}{}, err
 	}
 
 	arglist, err := bindAnyArgs(names, arg, m)
 	if err != nil {
-		return "", []interface{}{}, err
+		return safesql.New(""), []interface{}{}, err
 	}
 
 	return bound, arglist, nil
@@ -242,15 +244,16 @@ func findMatchingClosingBracketIndex(s string) int {
 	return 0
 }
 
-func fixBound(bound string, loop int) string {
-	loc := valuesReg.FindStringIndex(bound)
+func fixBound(bound safesql.TrustedSQLString, loop int) safesql.TrustedSQLString {
+	rawBound := bound.String()
+	loc := valuesReg.FindStringIndex(rawBound)
 	// defensive guard when "VALUES (...)" not found
 	if len(loc) < 2 {
 		return bound
 	}
 
 	openingBracketIndex := loc[1] - 1
-	index := findMatchingClosingBracketIndex(bound[openingBracketIndex:])
+	index := findMatchingClosingBracketIndex(rawBound[openingBracketIndex:])
 	// defensive guard. must have closing bracket
 	if index == 0 {
 		return bound
@@ -259,34 +262,34 @@ func fixBound(bound string, loop int) string {
 
 	var buffer bytes.Buffer
 
-	buffer.WriteString(bound[0:closingBracketIndex])
+	buffer.WriteString(rawBound[0:closingBracketIndex])
 	for i := 0; i < loop-1; i++ {
 		buffer.WriteString(",")
-		buffer.WriteString(bound[openingBracketIndex:closingBracketIndex])
+		buffer.WriteString(rawBound[openingBracketIndex:closingBracketIndex])
 	}
-	buffer.WriteString(bound[closingBracketIndex:])
-	return buffer.String()
+	buffer.WriteString(rawBound[closingBracketIndex:])
+	return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(buffer.String())
 }
 
 // bindArray binds a named parameter query with fields from an array or slice of
 // structs argument.
-func bindArray(bindType int, query string, arg interface{}, m *reflectx.Mapper) (string, []interface{}, error) {
+func bindArray(bindType int, query safesql.TrustedSQLString, arg interface{}, m *reflectx.Mapper) (safesql.TrustedSQLString, []interface{}, error) {
 	// do the initial binding with QUESTION;  if bindType is not question,
 	// we can rebind it at the end.
-	bound, names, err := compileNamedQuery([]byte(query), QUESTION)
+	bound, names, err := compileNamedQuery(query, QUESTION)
 	if err != nil {
-		return "", []interface{}{}, err
+		return safesql.New(""), []interface{}{}, err
 	}
 	arrayValue := reflect.ValueOf(arg)
 	arrayLen := arrayValue.Len()
 	if arrayLen == 0 {
-		return "", []interface{}{}, fmt.Errorf("length of array is 0: %#v", arg)
+		return safesql.New(""), []interface{}{}, fmt.Errorf("length of array is 0: %#v", arg)
 	}
 	var arglist = make([]interface{}, 0, len(names)*arrayLen)
 	for i := 0; i < arrayLen; i++ {
 		elemArglist, err := bindAnyArgs(names, arrayValue.Index(i).Interface(), m)
 		if err != nil {
-			return "", []interface{}{}, err
+			return safesql.New(""), []interface{}{}, err
 		}
 		arglist = append(arglist, elemArglist...)
 	}
@@ -301,10 +304,10 @@ func bindArray(bindType int, query string, arg interface{}, m *reflectx.Mapper) 
 }
 
 // bindMap binds a named parameter query with a map of arguments.
-func bindMap(bindType int, query string, args map[string]interface{}) (string, []interface{}, error) {
-	bound, names, err := compileNamedQuery([]byte(query), bindType)
+func bindMap(bindType int, query safesql.TrustedSQLString, args map[string]interface{}) (safesql.TrustedSQLString, []interface{}, error) {
+	bound, names, err := compileNamedQuery(query, bindType)
 	if err != nil {
-		return "", []interface{}{}, err
+		return safesql.New(""), []interface{}{}, err
 	}
 
 	arglist, err := bindMapArgs(names, args)
@@ -328,20 +331,21 @@ var allowedBindRunes = []*unicode.RangeTable{unicode.Letter, unicode.Digit}
 
 // compile a NamedQuery into an unbound query (using the '?' bindvar) and
 // a list of names.
-func compileNamedQuery(qs []byte, bindType int) (query string, names []string, err error) {
+func compileNamedQuery(qs safesql.TrustedSQLString, bindType int) (query safesql.TrustedSQLString, names []string, err error) {
 	names = make([]string, 0, 10)
-	rebound := make([]byte, 0, len(qs))
+	rawQs := []byte(qs.String())
+	rebound := make([]byte, 0, len(rawQs))
 
 	inName := false
-	last := len(qs) - 1
+	last := len(rawQs) - 1
 	currentVar := 1
 	name := make([]byte, 0, 10)
 
-	for i, b := range qs {
+	for i, b := range rawQs {
 		// a ':' while we're in a name is an error
 		if b == ':' {
 			// if this is the second ':' in a '::' escape sequence, append a ':'
-			if inName && i > 0 && qs[i-1] == ':' {
+			if inName && i > 0 && rawQs[i-1] == ':' {
 				rebound = append(rebound, ':')
 				inName = false
 				continue
@@ -402,30 +406,30 @@ func compileNamedQuery(qs []byte, bindType int) (query string, names []string, e
 		}
 	}
 
-	return string(rebound), names, err
+	return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(string(rebound)), names, err
 }
 
 // BindNamed binds a struct or a map to a query with named parameters.
 // DEPRECATED: use sqlx.Named` instead of this, it may be removed in future.
-func BindNamed(bindType int, query string, arg interface{}) (string, []interface{}, error) {
+func BindNamed(bindType int, query safesql.TrustedSQLString, arg interface{}) (safesql.TrustedSQLString, []interface{}, error) {
 	return bindNamedMapper(bindType, query, arg, mapper())
 }
 
 // Named takes a query using named parameters and an argument and
 // returns a new query with a list of args that can be executed by
 // a database.  The return value uses the `?` bindvar.
-func Named(query string, arg interface{}) (string, []interface{}, error) {
+func Named(query safesql.TrustedSQLString, arg interface{}) (safesql.TrustedSQLString, []interface{}, error) {
 	return bindNamedMapper(QUESTION, query, arg, mapper())
 }
 
-func bindNamedMapper(bindType int, query string, arg interface{}, m *reflectx.Mapper) (string, []interface{}, error) {
+func bindNamedMapper(bindType int, query safesql.TrustedSQLString, arg interface{}, m *reflectx.Mapper) (safesql.TrustedSQLString, []interface{}, error) {
 	t := reflect.TypeOf(arg)
 	k := t.Kind()
 	switch {
 	case k == reflect.Map && t.Key().Kind() == reflect.String:
 		m, ok := convertMapStringInterface(arg)
 		if !ok {
-			return "", nil, fmt.Errorf("sqlx.bindNamedMapper: unsupported map type: %T", arg)
+			return safesql.New(""), nil, fmt.Errorf("sqlx.bindNamedMapper: unsupported map type: %T", arg)
 		}
 		return bindMap(bindType, query, m)
 	case k == reflect.Array || k == reflect.Slice:
@@ -438,7 +442,7 @@ func bindNamedMapper(bindType int, query string, arg interface{}, m *reflectx.Ma
 // NamedQuery binds a named query and then runs Query on the result using the
 // provided Ext (sqlx.Tx, sqlx.Db).  It works with both structs and with
 // map[string]interface{} types.
-func NamedQuery(e Ext, query string, arg interface{}) (*Rows, error) {
+func NamedQuery(e Ext, query safesql.TrustedSQLString, arg interface{}) (*Rows, error) {
 	q, args, err := bindNamedMapper(BindType(e.DriverName()), query, arg, mapperFor(e))
 	if err != nil {
 		return nil, err
@@ -449,7 +453,7 @@ func NamedQuery(e Ext, query string, arg interface{}) (*Rows, error) {
 // NamedExec uses BindStruct to get a query executable by the driver and
 // then runs Exec on the result.  Returns an error from the binding
 // or the query execution itself.
-func NamedExec(e Ext, query string, arg interface{}) (sql.Result, error) {
+func NamedExec(e Ext, query safesql.TrustedSQLString, arg interface{}) (sql.Result, error) {
 	q, args, err := bindNamedMapper(BindType(e.DriverName()), query, arg, mapperFor(e))
 	if err != nil {
 		return nil, err

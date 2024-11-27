@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/go-safeweb/safesql"
+	"github.com/google/go-safeweb/safesql/uncheckedconversions"
 	"github.com/jmoiron/sqlx/reflectx"
 )
 
@@ -57,19 +59,23 @@ func BindDriver(driverName string, bindType int) {
 // losing much speed, and should be to avoid confusion.
 
 // Rebind a query from the default bindtype (QUESTION) to the target bindtype.
-func Rebind(bindType int, query string) string {
+func Rebind(bindType int, query safesql.TrustedSQLString) safesql.TrustedSQLString {
 	switch bindType {
 	case QUESTION, UNKNOWN:
 		return query
 	}
 
+	// Work with the raw string and convert back via unchecked conversion
+	// Make sure that no untrusted data is making its way into the string in the meantime!
+	rawQuery := query.String()
+
 	// Add space enough for 10 params before we have to allocate
-	rqb := make([]byte, 0, len(query)+10)
+	rqb := make([]byte, 0, len(rawQuery)+10)
 
 	var i, j int
 
-	for i = strings.Index(query, "?"); i != -1; i = strings.Index(query, "?") {
-		rqb = append(rqb, query[:i]...)
+	for i = strings.Index(rawQuery, "?"); i != -1; i = strings.Index(rawQuery, "?") {
+		rqb = append(rqb, rawQuery[:i]...)
 
 		switch bindType {
 		case DOLLAR:
@@ -83,10 +89,12 @@ func Rebind(bindType int, query string) string {
 		j++
 		rqb = strconv.AppendInt(rqb, int64(j), 10)
 
-		query = query[i+1:]
+		rawQuery = rawQuery[i+1:]
 	}
 
-	return string(append(rqb, query...))
+	rawQuery = string(append(rqb, rawQuery...))
+
+	return uncheckedconversions.TrustedSQLStringFromStringKnownToSatisfyTypeContract(rawQuery)
 }
 
 // Experimental implementation of Rebind which uses a bytes.Buffer.  The code is
